@@ -1,0 +1,51 @@
+name: Create a pull request for release.
+
+on:
+  push:
+    branches-ignore:
+      - main
+
+jobs:
+  create-release-pr:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # これで全てのコミット履歴をフェッチ
+
+      - name: Set current datetime as env variable
+        env:
+          TZ: 'Asia/Tokyo' # タイムゾーン指定
+        run: echo "current_date=$(date +'%Y-%m-%d')" >> $GITHUB_ENV
+
+      - name: 1st Git Commit Message To Env
+        run: |
+          echo "COMMIT_M=$(git log --pretty=format:"%s"| tail -n 1)" >> $GITHUB_ENV
+
+      - name: Configure_Pull_Request_Settings
+        id: pr_config
+        run: |
+          pr_title="${{ (github.ref == 'refs/heads/develop' && '[Release]') || env.COMMIT_M }}"
+          echo "pr_title=${pr_title}" >> $GITHUB_OUTPUT
+          base_branch=${{ (github.ref == 'refs/heads/develop' && 'main') || 'develop' }}
+          echo "base_branch=${base_branch}" >> $GITHUB_OUTPUT
+
+          # ブランチがMAINの場合はリリース用テンプレートを使用。異なる場合はデフォルト用テンプレートを使用
+          echo "pr_template_file=${{ (github.ref == 'refs/heads/develop') && 'release' || 'feat' }}" >> $GITHUB_OUTPUT
+          # PRタイトルとブランチの向け先が同じ場合は、count=1 異なる場合は０
+          echo "count=$(gh pr list -S "${pr_title}" -B ${base_branch} | wc -l)" >> $GITHUB_OUTPUT
+
+      # リリース用PRを作成
+      - name: Create release pr
+        if: ${{ steps.pr_config.outputs.count == 0 }}
+        run: |
+          gh pr create -B ${{ steps.pr_config.outputs.base_branch }} \
+          -t '${{ steps.pr_config.outputs.pr_title }} / ${{env.current_date}}' \
+          -a ${{ github.actor }} \
+          --body-file ./.github/pr_template/${{ steps.pr_config.outputs.pr_template_file}}.md
+      - if: ${{ steps.pr_config.outputs.count >= 1 }}
+        run: |
+          echo "PR already exists "
